@@ -6,19 +6,19 @@ This project was made on purpose of learning [Go](https://go.dev/). It's probabl
 ## Prerequisites
 - [SQLite3](https://www.sqlite.org/)
 
-## Installation
+## Installation & usage
 
-Install my project with go
-
+  - Windows
 ```bash
-  go build
-  go install
+go build
+go install
+todo
 ```
 
-To run it, from projects directory do
-
+  - Linux
 ```bash
-  todo
+go build
+./todo
 ```
 ## Packages used
  -  [database/sql - provides a generic interface around SQL (or SQL-like) databases](https://pkg.go.dev/database/sql)
