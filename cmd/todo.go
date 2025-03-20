@@ -30,7 +30,7 @@ var createCmd = &cobra.Command{
 }
 
 var removeCmd = &cobra.Command{
-	Use:                   "remove [task id / "all"]",
+	Use:                   "remove [task id / 'all']",
 	Short:                 "Removes a task.",
 	Long:                  "Removes a task from the SQLite database.",
 	DisableFlagsInUseLine: true,
