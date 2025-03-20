@@ -1,19 +1,21 @@
 package cmd
 
 import (
-	"encoding/csv"
+	"database/sql"
 	"fmt"
 	"os"
 	"strconv"
 	"text/tabwriter"
+	"todo/database"
 
 	"github.com/spf13/cobra"
+	_ "github.com/mattn/go-sqlite3"
 )
 
 var listCmd = &cobra.Command{
 	Use:                   "list",
 	Short:                 "List all tasks.",
-	Long:                  "Lists tasks that exist inside data.csv file.",
+	Long:                  "Lists tasks that exist inside the SQLite database.",
 	DisableFlagsInUseLine: true,
 	Run:                   list,
 }
@@ -21,7 +23,7 @@ var listCmd = &cobra.Command{
 var createCmd = &cobra.Command{
 	Use:                   "create ['task']",
 	Short:                 "Create new task.",
-	Long:                  "Creates new task by appending it to the data.csv file.",
+	Long:                  "Creates new task in the SQLite database.",
 	DisableFlagsInUseLine: true,
 	Args:                  cobra.ExactArgs(1),
 	Run:                   create,
@@ -30,7 +32,7 @@ var createCmd = &cobra.Command{
 var removeCmd = &cobra.Command{
 	Use:                   "remove [task id]",
 	Short:                 "Removes a task.",
-	Long:                  "Removes a task by rewriting the file with every task except the one you wish to be removed.",
+	Long:                  "Removes a task from the SQLite database.",
 	DisableFlagsInUseLine: true,
 	Args:                  cobra.ExactArgs(1),
 	Run:                   remove,
@@ -39,235 +41,173 @@ var removeCmd = &cobra.Command{
 var checkCmd = &cobra.Command{
 	Use:                   "check [task id]",
 	Short:                 "Checks off a task",
-	Long:                  "Cheks off a task by rewriting the file with a modified task.",
+	Long:                  "Checks off a task in the SQLite database.",
 	DisableFlagsInUseLine: true,
 	Args:                  cobra.ExactArgs(1),
 	Run:                   check,
 }
 
 func init() {
+	dbConnection, err := sql.Open("sqlite3", "./data.db")
+	if err != nil {
+		panic(err)
+	}
+	defer dbConnection.Close()
+
+	taskRepository := &database.TaskRepository{Db: dbConnection}
+
+	err = taskRepository.CreateTable()
+	if err != nil {
+		panic(err)
+	}
+
 	rootCmd.AddCommand(listCmd)
 	rootCmd.AddCommand(createCmd)
 	rootCmd.AddCommand(removeCmd)
 	rootCmd.AddCommand(checkCmd)
 }
 
-type Task struct {
-	Task  string `csv:"task"`
-	Check bool   `csv:"check"`
-}
-
 func list(cmd *cobra.Command, args []string) {
-	file, err := os.Open("data.csv")
+	dbConnection, err := sql.Open("sqlite3", "./data.db")
 	if err != nil {
 		panic(err)
 	}
-	defer file.Close()
+	defer dbConnection.Close()
 
-	reader := csv.NewReader(file)
 
-	_, err = reader.Read()
-	if err != nil {
-		panic(err)
-	}
-
-	var tasks []Task
-
-	records, err := reader.ReadAll()
+	err = resequenceIDs(dbConnection)
 	if err != nil {
 		panic(err)
 	}
 
-	for _, record := range records {
-		check, err := strconv.ParseBool(record[1])
-		if err != nil {
-			panic(err)
-		}
+	taskRepository := &database.TaskRepository{Db: dbConnection}
 
-		task := Task{
-			Task:  record[0],
-			Check: check,
-		}
-
-		tasks = append(tasks, task)
+	tasks, err := taskRepository.GetALL()
+	if err != nil {
+		panic(err)
 	}
 
-	w := tabwriter.NewWriter(os.Stdout, 0, 8, 1, '\t', tabwriter.TabIndent)
+	w := tabwriter.NewWriter(os.Stdout, 0, 8, 1, '\t',
+	tabwriter.TabIndent)
 
 	fmt.Fprint(w, "ID", "\t", "Task", "\t", "Check", "\t\n")
 
-	for i, task := range tasks {
-		if task.Check == false {
-			fmt.Fprint(w, i, "\t", task.Task, "\t", "[ ]\n")
+	for _, task := range tasks {
+		if task.IsChecked == false {
+			fmt.Fprint(w, task.Id, "\t", task.Task, "\t", "[ ]\n")
 		} else {
-			fmt.Fprint(w, i, "\t", task.Task, "\t", "[x]\n")
+			fmt.Fprint(w, task.Id, "\t", task.Task, "\t", "[x]\n")
 		}
 	}
 	w.Flush()
 }
 
 func create(cmd *cobra.Command, args []string) {
-
 	task := args[0]
 
-	file, err := os.OpenFile("data.csv", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	dbConnection, err := sql.Open("sqlite3", "./data.db")
 	if err != nil {
 		panic(err)
 	}
-	defer file.Close()
+	defer dbConnection.Close()
 
-	writer := csv.NewWriter(file)
-	record := []string{task, "false"}
+	taskRepository := &database.TaskRepository{Db: dbConnection}
 
-	err = writer.Write(record)
+	err = taskRepository.Insert(database.Task{Task: task})
 	if err != nil {
-		panic(err)
-	}
-
-	writer.Flush()
-	if err := writer.Error(); err != nil {
 		panic(err)
 	}
 }
 
 func remove(cmd *cobra.Command, args []string) {
+	dbConnection, err := sql.Open("sqlite3", "./data.db")
+	if err != nil {
+		panic(err)
+	}
+	defer dbConnection.Close()
 
-	taskId, err := strconv.Atoi(args[0])
+	err = resequenceIDs(dbConnection)
 	if err != nil {
 		panic(err)
 	}
 
-	fileread, err := os.Open("data.csv")
-	if err != nil {
-		panic(err)
-	}
+	taskRepository := &database.TaskRepository{Db: dbConnection}
 
-	defer fileread.Close()
-
-	reader := csv.NewReader(fileread)
-
-	_, err = reader.Read()
-	if err != nil {
-		panic(err)
-	}
-
-	records, err := reader.ReadAll()
-	if err != nil {
-		panic(err)
-	}
-
-	fileNew, err := os.OpenFile("data.csv", os.O_RDWR|os.O_TRUNC|os.O_CREATE, 0644)
-	if err != nil {
-		panic(err)
-	}
-	defer fileNew.Close()
-
-	writer := csv.NewWriter(fileNew)
-
-	header := []string{"task", "check"}
-	err = writer.Write(header)
-	if err != nil {
-		panic(err)
-	}
-
-	for i, record := range records {
-		if i != taskId {
-
-			check, err := strconv.ParseBool(record[1])
-			if err != nil {
-				panic(err)
-			}
-
-			task := Task{
-				Task:  record[0],
-				Check: check,
-			}
-
-			record := []string{task.Task, record[1]}
-			err = writer.Write(record)
-			if err != nil {
-				panic(err)
-			}
+	if args[0] == "all" {
+		err := taskRepository.DeleteAll()
+		if err != nil {
+			panic(err)
 		}
-	}
+	} else {
+		id, err := strconv.Atoi(args[0])
+		if err != nil {
+			panic(err)
+		}
 
-	writer.Flush()
-	if err := writer.Error(); err != nil {
-		panic(err)
-	}
+		err = taskRepository.Delete(id)
+		if err != nil {
+			panic(err)
+		}
 
+	}
 }
 
-func check(cmd *cobra.Command, args []string) {
 
+func check(cmd *cobra.Command, args []string) {
 	taskId, err := strconv.Atoi(args[0])
 	if err != nil {
 		panic(err)
 	}
 
-	fileread, err := os.Open("data.csv")
+	dbConnection, err := sql.Open("sqlite3", "./data.db")
 	if err != nil {
 		panic(err)
 	}
-	defer fileread.Close()
+	defer dbConnection.Close()
 
-	reader := csv.NewReader(fileread)
-
-	_, err = reader.Read()
-	if err != nil {
-		panic(err)
-	}
-
-	records, err := reader.ReadAll()
+	err = resequenceIDs(dbConnection)
 	if err != nil {
 		panic(err)
 	}
 
-	filenew, err := os.OpenFile("data.csv", os.O_RDWR|os.O_TRUNC|os.O_CREATE, 0644)
-	if err != nil {
-		panic(err)
-	}
-	defer filenew.Close()
+	taskRepository := &database.TaskRepository{Db: dbConnection}
 
-	writer := csv.NewWriter(filenew)
-
-	header := []string{"task", "check"}
-	err = writer.Write(header)
+	task, err := taskRepository.GetById(taskId)
 	if err != nil {
 		panic(err)
 	}
 
-	for i, record := range records {
-		check, err := strconv.ParseBool(record[1])
+	task.IsChecked = !task.IsChecked
+
+	err = taskRepository.Update(task)
+	if err != nil {
+		panic(err)
+	}
+}
+
+func resequenceIDs(db *sql.DB) error { 	
+	rows, err := db.Query("SELECT id FROM tasks ORDER BY id")
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	var tasks []database.Task
+	for rows.Next() {
+		var task database.Task
+		err := rows.Scan(&task.Id)
 		if err != nil {
-			panic(err)
+			return err
 		}
+		tasks = append(tasks, task)
+	}
 
-		var task Task
-
-		if i == taskId {
-			task = Task{
-				Task:  record[0],
-				Check: !check,
-			}
-		} else {
-			task = Task{
-				Task:  record[0],
-				Check: check,
-			}
-		}
-
-		checkStr := strconv.FormatBool(task.Check)
-		record := []string{task.Task, checkStr}
-
-		err = writer.Write(record)
+	for i, task := range tasks {
+		_, err := db.Exec("UPDATE tasks SET id = ? WHERE rowid = ?",
+		i+1, task.Id)
 		if err != nil {
-			panic(err)
+			return err
 		}
 	}
-
-	writer.Flush()
-	if err := writer.Error(); err != nil {
-		panic(err)
-	}
+	return nil
 }
