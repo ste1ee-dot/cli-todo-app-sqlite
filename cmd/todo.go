@@ -47,19 +47,50 @@ var checkCmd = &cobra.Command{
 	Run:                   check,
 }
 
-func init() {
+func connectDb() (*database.TaskRepository, *sql.DB, error) {
 	dbConnection, err := sql.Open("sqlite3", "./data.db")
 	if err != nil {
-		panic(err)
+		return nil, nil, err
 	}
-	defer dbConnection.Close()
 
-	taskRepository := &database.TaskRepository{Db: dbConnection}
+	var taskRepository = &database.TaskRepository{Db: dbConnection}
 
-	err = taskRepository.CreateTable()
+	taskRepository.CreateTable()
+
+	rows, err := dbConnection.Query("SELECT id FROM tasks ORDER BY id")
 	if err != nil {
-		panic(err)
+		return nil, nil, err
 	}
+	defer rows.Close()
+
+	var tasks []database.Task
+	for rows.Next() {
+		var task database.Task
+		err := rows.Scan(&task.Id)
+		if err != nil {
+			return nil, nil, err
+		}
+		tasks = append(tasks, task)
+	}
+
+	for i, task := range tasks {
+		_, err := dbConnection.Exec("UPDATE tasks SET id = ? WHERE rowid = ?",
+		i+1, task.Id)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+
+	return taskRepository, dbConnection, nil
+}
+
+func init() {
+
+	taskRepository, dbConnection, err := connectDb()
+	if err != nil { panic(err) }
+	err = taskRepository.CreateTable()
+	if err != nil { panic(err) }
+	dbConnection.Close()
 
 	rootCmd.AddCommand(listCmd)
 	rootCmd.AddCommand(createCmd)
@@ -68,24 +99,14 @@ func init() {
 }
 
 func list(cmd *cobra.Command, args []string) {
-	dbConnection, err := sql.Open("sqlite3", "./data.db")
-	if err != nil {
-		panic(err)
-	}
-	defer dbConnection.Close()
-
-
-	err = resequenceIDs(dbConnection)
-	if err != nil {
-		panic(err)
-	}
-
-	taskRepository := &database.TaskRepository{Db: dbConnection}
+	taskRepository, dbConnection, err := connectDb()
+	if err != nil { panic(err) }
 
 	tasks, err := taskRepository.GetALL()
 	if err != nil {
 		panic(err)
 	}
+	dbConnection.Close()
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 8, 1, '\t',
 	tabwriter.TabIndent)
@@ -105,33 +126,19 @@ func list(cmd *cobra.Command, args []string) {
 func create(cmd *cobra.Command, args []string) {
 	task := args[0]
 
-	dbConnection, err := sql.Open("sqlite3", "./data.db")
-	if err != nil {
-		panic(err)
-	}
-	defer dbConnection.Close()
-
-	taskRepository := &database.TaskRepository{Db: dbConnection}
+	taskRepository,	dbConnection, err := connectDb()
+	if err != nil { panic(err) }
 
 	err = taskRepository.Insert(database.Task{Task: task})
 	if err != nil {
 		panic(err)
 	}
+	dbConnection.Close()
 }
 
 func remove(cmd *cobra.Command, args []string) {
-	dbConnection, err := sql.Open("sqlite3", "./data.db")
-	if err != nil {
-		panic(err)
-	}
-	defer dbConnection.Close()
-
-	err = resequenceIDs(dbConnection)
-	if err != nil {
-		panic(err)
-	}
-
-	taskRepository := &database.TaskRepository{Db: dbConnection}
+	taskRepository, dbConnection, err := connectDb()
+	if err != nil { panic(err) }
 
 	if args[0] == "all" {
 		err := taskRepository.DeleteAll()
@@ -150,6 +157,7 @@ func remove(cmd *cobra.Command, args []string) {
 		}
 
 	}
+	dbConnection.Close()
 }
 
 
@@ -159,18 +167,8 @@ func check(cmd *cobra.Command, args []string) {
 		panic(err)
 	}
 
-	dbConnection, err := sql.Open("sqlite3", "./data.db")
-	if err != nil {
-		panic(err)
-	}
-	defer dbConnection.Close()
-
-	err = resequenceIDs(dbConnection)
-	if err != nil {
-		panic(err)
-	}
-
-	taskRepository := &database.TaskRepository{Db: dbConnection}
+	taskRepository, dbConnection, err := connectDb()
+	if err != nil { panic(err) }
 
 	task, err := taskRepository.GetById(taskId)
 	if err != nil {
@@ -183,31 +181,6 @@ func check(cmd *cobra.Command, args []string) {
 	if err != nil {
 		panic(err)
 	}
+	dbConnection.Close()
 }
 
-func resequenceIDs(db *sql.DB) error { 	
-	rows, err := db.Query("SELECT id FROM tasks ORDER BY id")
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-
-	var tasks []database.Task
-	for rows.Next() {
-		var task database.Task
-		err := rows.Scan(&task.Id)
-		if err != nil {
-			return err
-		}
-		tasks = append(tasks, task)
-	}
-
-	for i, task := range tasks {
-		_, err := db.Exec("UPDATE tasks SET id = ? WHERE rowid = ?",
-		i+1, task.Id)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
